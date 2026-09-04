@@ -1,0 +1,3 @@
+# luau-lsp type definitions: fetched from official-plugins, not vendored.
+# curl -O https://raw.githubusercontent.com/noctalia-dev/official-plugins/main/noctalia.d.luau
+noctalia.d.luau
