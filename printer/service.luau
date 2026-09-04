@@ -139,15 +139,27 @@ local function parseDestinations(stdout)
   return names
 end
 
+-- Destination names differ only in punctuation between the DNS-SD advertisement
+-- and the queue CUPS builds from it: the printer below is announced as
+-- "HP_Smart_Tank_580_590_series_D692D5" and queued as
+-- "HP_Smart_Tank_580-590_series_D692D5". Comparing the two verbatim lists the
+-- same printer twice, so names are folded before they are matched.
+local function foldName(name)
+  return (tostring(name or ""):lower():gsub("[^%w]+", "_"):gsub("^_+", ""):gsub("_+$", ""))
+end
+
 -- Adds the discovered-only destinations to the configured ones, so a driverless
--- printer is offered before CUPS has materialized a queue for it.
+-- printer is offered before CUPS has materialized a queue for it. A destination
+-- that is already a queue is dropped rather than listed a second time.
 local function mergeDiscovered(printers, names)
   local known = {}
   for _, p in ipairs(printers) do
-    known[p.name] = true
+    known[foldName(p.name)] = true
   end
   for _, name in ipairs(names) do
-    if known[name] == nil then
+    local key = foldName(name)
+    if known[key] == nil then
+      known[key] = true
       table.insert(printers, { name = name, state = "available", enabled = true, discovered = true })
     end
   end
@@ -363,8 +375,13 @@ local function publishDevices(printers)
 
   run({ "lpstat", "-v" }, function(uriResult)
     local queuedUris = {}
+    -- Folded queue names, as a fallback for a queue pointing at the same
+    -- printer through a different URI than the one discovery reports (a
+    -- hand-made ipp:// queue against a dnssd:// advertisement, say).
+    local queuedNames = {}
     for name, uri in pairs(parseDeviceUris(uriResult.stdout)) do
       queuedUris[uri] = name
+      queuedNames[foldName(name)] = name
     end
 
     run({ "lpinfo", "-l", "--include-schemes", "dnssd,ipp,ipps,socket,lpd,usb", "-v" }, function(result)
@@ -372,6 +389,9 @@ local function publishDevices(printers)
       local rows = {}
       for _, d in ipairs(devices) do
         local queuedAs = queuedUris[d.uri]
+        if queuedAs == nil and d.model ~= "" then
+          queuedAs = queuedNames[foldName(d.model)]
+        end
         table.insert(rows, {
           uri = d.uri,
           info = d.info ~= "" and d.info or d.uri,

@@ -112,6 +112,10 @@ noctalia msg plugin andrewdems/printer:service all print-clipboard  # print the 
   Everywhere printer found over DNS-SD appears in the second list only until
   CUPS materializes a permanent queue for it, so without the merge it would be
   missing from the panel on exactly the setups that need no configuration.
+  Once the queue exists, both lists name the same printer with different
+  punctuation (`HP_Smart_Tank_580_590_series` announced, `HP_Smart_Tank_580-590_series`
+  queued), so names are compared with punctuation and case folded and the
+  printer is listed once.
 - **Printer changes.** **Add** runs `lpadmin -p <name> -E -v <uri> -m everywhere`
   and the trash icon runs `lpadmin -x <name>`. Both change system-wide CUPS
   configuration, not just this user's, which is why removal asks first. Only
