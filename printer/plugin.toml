@@ -12,7 +12,7 @@ license      = "MIT"
 icon         = "printer"
 description  = "CUPS printers and print queue in the bar: job count, faults, cancel jobs, set the default printer."
 tags         = ["bar", "panel", "service", "shortcut", "hardware", "system", "utility"]
-dependencies = ["lpstat", "lp", "cancel", "lpoptions", "xdg-open"]
+dependencies = ["lpstat", "lp", "cancel", "lpoptions", "lpinfo", "lpadmin", "xdg-open"]
 
 [[setting]]
 key = "poll_interval_seconds"

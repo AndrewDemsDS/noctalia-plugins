@@ -17,9 +17,14 @@ configure: whatever destinations CUPS knows about are the ones you see.
 
 ## Requirements
 
-A running CUPS installation providing `lpstat`, `lp`, `cancel` and `lpoptions`
-on `PATH` (the `cups` package on most distributions), plus `xdg-open` for the
-**Open CUPS** button.
+A running CUPS installation providing `lpstat`, `lp`, `cancel`, `lpoptions`,
+`lpinfo` and `lpadmin` on `PATH` (the `cups` package on most distributions),
+plus `xdg-open` for the **Open CUPS** button.
+
+Adding and removing printers needs CUPS administrative rights. On a normal
+desktop install your user is already in the CUPS `SystemGroup` (`sys` or `wheel`
+depending on the distribution) and `lpadmin` works with no password; if it does
+not, the panel reports what CUPS said instead of prompting.
 
 The **Printer settings** button runs whatever `settings_command` names
 (`system-config-printer` by default). Install it, point the setting at another
@@ -41,11 +46,22 @@ Center; it opens the same panel.
 In the panel:
 
 - **Printers**: every CUPS destination with its state. The default is shown in
-  bold; **Set default** on any other row runs `lpoptions -d`. A driverless
+  bold; **Set default** on any other row runs `lpoptions -d`, and the trash icon
+  removes the queue after a confirmation step. A driverless
   printer that CUPS has discovered but not yet added shows as *available, not
   yet added*, and can be set as the default like any other.
-- **Queue**: the active jobs, newest CUPS order. The **×** on a row cancels that
-  job; **Cancel all** asks for confirmation, then cancels the lot.
+- **Queue**: the active jobs, newest CUPS order. Each row carries the job's CUPS
+  status, so a job stuck in the filter chain says why on the row instead of
+  failing silently; a failed job turns the row red and the bar widget with it.
+  The **×** on a row cancels that job; **Cancel all** asks for confirmation, then
+  cancels the lot.
+- **Add a printer**: expand it to list what CUPS can see over DNS-SD, IPP, USB,
+  LPD and raw sockets. Each printer is listed once, preferring its driverless
+  IPP service over the raw port, and shows the queue name it would get. **Add**
+  creates it with `lpadmin -m everywhere`, so the queue is driverless IPP
+  Everywhere with no vendor driver and no PPD to maintain. A device that is
+  already a queue says so and cannot be added twice; the match is on the device
+  URI, not the name, so a queue set up by another tool is still recognised.
 - **Open CUPS** opens the CUPS web interface, **Printer settings** launches your
   printer configuration tool, and **Print clipboard** sends the current clipboard
   text to the default printer.
@@ -78,7 +94,7 @@ noctalia msg plugin andrewdems/printer:service all print-clipboard  # print the 
 
 ## Notes
 
-- **Processes.** The service spawns `lpstat -d`, `lpstat -p`, `lpstat -e` and `lpstat -o`
+- **Processes.** The service spawns `lpstat -d`, `lpstat -p`, `lpstat -e` and `lpstat -l -o`
   on every poll, and `cancel`, `lpoptions -d`, `lp -d`, `xdg-open` or the configured
   settings command when you use an action. Every one is spawned as an argv list,
   never through a shell, so a printer or job name can never be interpreted as a
@@ -96,6 +112,12 @@ noctalia msg plugin andrewdems/printer:service all print-clipboard  # print the 
   Everywhere printer found over DNS-SD appears in the second list only until
   CUPS materializes a permanent queue for it, so without the merge it would be
   missing from the panel on exactly the setups that need no configuration.
+- **Printer changes.** **Add** runs `lpadmin -p <name> -E -v <uri> -m everywhere`
+  and the trash icon runs `lpadmin -x <name>`. Both change system-wide CUPS
+  configuration, not just this user's, which is why removal asks first. Only
+  driverless printers can be added here; one that needs a vendor driver has to be
+  set up in a full printer configuration tool.
 - **Faults.** A printer is treated as faulted when `lpstat -p` reports it as
-  `disabled` or `stopped`. CUPS keeps that state until you re-enable the printer,
+  `disabled` or `stopped`, and a job is treated as failed when its CUPS alert
+  mentions an error. CUPS keeps that state until you re-enable the printer,
   so the widget stays red until the underlying problem is cleared.

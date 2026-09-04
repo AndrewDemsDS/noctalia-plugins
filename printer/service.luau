@@ -154,25 +154,161 @@ local function mergeDiscovered(printers, names)
   return printers
 end
 
--- "HP_Smart_Tank-42   andrewdems   12288   Thu 04 Sep 2026 09:12:03 PM EEST"
+-- "device for NAME: dnssd://..." -> { NAME = uri }. Comparing a discovered
+-- device's URI against these is exact, where comparing derived queue names is
+-- not: CUPS and the GUI tools append their own suffixes when they create a
+-- queue, so the same printer rarely ends up with the name this plugin derives.
+local function parseDeviceUris(stdout)
+  local uris = {}
+  for _, line in ipairs(splitLines(stdout)) do
+    local name, uri = line:match("^device for%s+([^:]+):%s*(.+)$")
+    if name ~= nil then
+      uris[trim(name)] = trim(uri)
+    end
+  end
+  return uris
+end
+
+-- `lpinfo -l -v` describes one device per "Device:" block:
+--
+--   Device: uri = dnssd://HP%20Smart%20Tank...._ipp._tcp.local/?uuid=...
+--           class = network
+--           info = HP Smart Tank 580-590 series [D692D5]
+--           make-and-model = HP Smart Tank 580-590 series
+--
+-- Bare scheme entries ("uri = ipp") are backends, not printers, so only URIs
+-- carrying a "://" are real devices.
+local function parseDevices(stdout)
+  local devices = {}
+  local current = nil
+  for _, line in ipairs(splitLines(stdout)) do
+    local uri = line:match("^Device:%s*uri%s*=%s*(.+)$")
+    if uri ~= nil then
+      uri = trim(uri)
+      current = { uri = uri, info = "", model = "" }
+      if uri:find("://") ~= nil then
+        table.insert(devices, current)
+      else
+        current = nil
+      end
+    elseif current ~= nil then
+      local info = line:match("^%s*info%s*=%s*(.*)$")
+      local model = line:match("^%s*make%-and%-model%s*=%s*(.*)$")
+      if info ~= nil then
+        current.info = trim(info)
+      elseif model ~= nil then
+        model = trim(model)
+        current.model = model ~= "Unknown" and model or ""
+      end
+    end
+  end
+  return devices
+end
+
+-- One physical printer is usually advertised several times (IPP, IPPS and a raw
+-- pdl-datastream port). Rank the driverless-capable URIs above the raw ones and
+-- keep one entry per model, so the panel offers a printer rather than a list of
+-- its protocols.
+local function rankUri(uri)
+  if uri:find("_ipps%._tcp") ~= nil or uri:match("^ipps://") ~= nil then
+    return 4
+  end
+  if uri:find("_ipp%._tcp") ~= nil or uri:match("^ipp://") ~= nil then
+    return 3
+  end
+  if uri:find("_pdl%-datastream") ~= nil or uri:match("^socket://") ~= nil then
+    return 1
+  end
+  return 2
+end
+
+local function dedupeDevices(devices)
+  local best = {}
+  local order = {}
+  for _, d in ipairs(devices) do
+    local key = d.model ~= "" and d.model or d.uri
+    d.rank = rankUri(d.uri)
+    if best[key] == nil then
+      best[key] = d
+      table.insert(order, key)
+    elseif d.rank > best[key].rank then
+      best[key] = d
+    end
+  end
+  local result = {}
+  for _, key in ipairs(order) do
+    table.insert(result, best[key])
+  end
+  return result
+end
+
+-- CUPS queue names allow no spaces and no "/", "#" or tab. Derive one from the
+-- model, the way the CUPS web interface does.
+local function queueNameFor(device, taken)
+  local base = device.model ~= "" and device.model or device.info
+  base = trim(base)
+  if base == "" then
+    base = "printer"
+  end
+  base = base:gsub("[^%w%.%-_]+", "_"):gsub("^_+", ""):gsub("_+$", "")
+  if base == "" then
+    base = "printer"
+  end
+  local name = base
+  local n = 1
+  while taken[name] ~= nil do
+    n += 1
+    name = `{base}_{n}`
+  end
+  return name
+end
+
+-- `lpstat -l -o` prints one job header per job, followed by indented attribute
+-- lines that carry the reason a job is stuck:
+--
+--   HP_Smart_Tank-42   andrewdems   12288   Thu 04 Sep 2026 09:12:03 PM EEST
+--   \tStatus: cfFilterChain: pdftopdf (PID 84217) stopped with status 1
+--   \tAlerts: job-completed-with-errors
+--
+-- An indented line therefore belongs to the job above it, never to a job of its
+-- own, so the header test has to be anchored to the left margin.
 local function parseJobs(stdout)
   local jobs = {}
+  local current = nil
   for _, line in ipairs(splitLines(stdout)) do
-    local fields = splitFields(line)
-    local id = fields[1]
-    if id ~= nil and id ~= "" then
-      local dash = id:match("^(.*)%-%d+$")
-      local when = ""
-      if #fields > 3 then
-        when = table.concat(fields, " ", 4)
+    if line:match("^%s") ~= nil then
+      if current ~= nil then
+        local status = line:match("^%s*Status:%s*(.+)$")
+        local alerts = line:match("^%s*Alerts:%s*(.+)$")
+        if status ~= nil then
+          current.status = trim(status)
+        elseif alerts ~= nil then
+          current.alerts = trim(alerts)
+          current.failed = current.alerts:find("error") ~= nil
+        end
       end
-      table.insert(jobs, {
-        id = id,
-        printer = dash or id,
-        user = fields[2] or "",
-        size = fields[3] or "",
-        when = when,
-      })
+    else
+      local fields = splitFields(line)
+      local id = fields[1]
+      if id ~= nil and id ~= "" then
+        local when = ""
+        if #fields > 3 then
+          when = table.concat(fields, " ", 4)
+        end
+        current = {
+          id = id,
+          -- The trailing "-<number>" is the job number; the rest is the queue,
+          -- which may itself contain dashes ("HP_Smart_Tank_580-590_series").
+          printer = id:match("^(.*)%-%d+$") or id,
+          user = fields[2] or "",
+          size = fields[3] or "",
+          when = when,
+          status = "",
+          alerts = "",
+          failed = false,
+        }
+        table.insert(jobs, current)
+      end
     end
   end
   return jobs
@@ -200,6 +336,11 @@ local function publish(defaultPrinter, printers, jobs)
       hasFault = true
     end
   end
+  for _, j in ipairs(jobs) do
+    if j.failed then
+      hasFault = true
+    end
+  end
 
   noctalia.state.set("printer.printers", printers)
   noctalia.state.set("printer.jobs", jobs)
@@ -211,6 +352,40 @@ local function publish(defaultPrinter, printers, jobs)
   })
 end
 
+-- Discoverable devices that are not already a queue, each with the name the
+-- panel would give it. lpinfo talks to the CUPS backends, so it is slower than
+-- lpstat and is scanned on the same poll rather than on its own timer.
+local function publishDevices(printers)
+  local taken = {}
+  for _, p in ipairs(printers) do
+    taken[p.name] = true
+  end
+
+  run({ "lpstat", "-v" }, function(uriResult)
+    local queuedUris = {}
+    for name, uri in pairs(parseDeviceUris(uriResult.stdout)) do
+      queuedUris[uri] = name
+    end
+
+    run({ "lpinfo", "-l", "--include-schemes", "dnssd,ipp,ipps,socket,lpd,usb", "-v" }, function(result)
+      local devices = dedupeDevices(parseDevices(result.stdout))
+      local rows = {}
+      for _, d in ipairs(devices) do
+        local queuedAs = queuedUris[d.uri]
+        table.insert(rows, {
+          uri = d.uri,
+          info = d.info ~= "" and d.info or d.uri,
+          model = d.model,
+          suggestedName = queuedAs or queueNameFor(d, taken),
+          alreadyQueued = queuedAs ~= nil,
+          queuedAs = queuedAs or "",
+        })
+      end
+      noctalia.state.set("printer.devices", rows)
+    end, 20000)
+  end)
+end
+
 -- lpstat is called four times with plain argv rather than once behind a shell
 -- pipeline, so the plugin never needs /bin/sh.
 local function refresh()
@@ -220,10 +395,11 @@ local function refresh()
       local printers = parsePrinters(printerResult.stdout)
       run({ "lpstat", "-e" }, function(destResult)
         printers = mergeDiscovered(printers, parseDestinations(destResult.stdout))
-        run({ "lpstat", "-o" }, function(jobResult)
+        run({ "lpstat", "-l", "-o" }, function(jobResult)
           local jobs = parseJobs(jobResult.stdout)
           notifyFaults(printers)
           publish(defaultPrinter, printers, jobs)
+          publishDevices(printers)
         end)
       end)
     end)
@@ -315,6 +491,49 @@ local function openPrinterSettings()
   run(argv)
 end
 
+-- Adds a discovered device as a permanent queue. IPP Everywhere (-m everywhere)
+-- is the driverless path: no vendor driver, no PPD to maintain. A printer that
+-- cannot do driverless needs its own driver, which is system-config-printer's
+-- job, not this plugin's, so the failure is reported rather than worked around.
+local function addPrinter(name, uri)
+  name = trim(name)
+  uri = trim(uri)
+  if name == "" or uri == "" then
+    return
+  end
+  run({ "lpadmin", "-p", name, "-E", "-v", uri, "-m", "everywhere" }, function(result)
+    if result.exitCode == 0 then
+      noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.added", { printer = name }))
+      refresh()
+    else
+      local err = trim(result.stderr)
+      noctalia.notifyError(
+        noctalia.tr("title"),
+        err ~= "" and err or noctalia.tr("notifications.add_failed", { printer = name })
+      )
+    end
+  end, 30000)
+end
+
+local function removePrinter(name)
+  name = trim(name)
+  if name == "" then
+    return
+  end
+  run({ "lpadmin", "-x", name }, function(result)
+    if result.exitCode == 0 then
+      noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.removed", { printer = name }))
+      refresh()
+    else
+      local err = trim(result.stderr)
+      noctalia.notifyError(
+        noctalia.tr("title"),
+        err ~= "" and err or noctalia.tr("notifications.remove_failed", { printer = name })
+      )
+    end
+  end, 30000)
+end
+
 -- ── command channel ──────────────────────────────────────────────────────
 
 local function handleCommand(cmd)
@@ -334,6 +553,10 @@ local function handleCommand(cmd)
     openQueue()
   elseif op == "open_settings" then
     openPrinterSettings()
+  elseif op == "add" then
+    addPrinter(cmd.name, cmd.uri)
+  elseif op == "remove" then
+    removePrinter(cmd.name)
   elseif op == "refresh" then
     refresh()
   end
@@ -386,5 +609,6 @@ end
 
 noctalia.state.set("printer.printers", {})
 noctalia.state.set("printer.jobs", {})
+noctalia.state.set("printer.devices", {})
 noctalia.state.set("printer.status", { defaultPrinter = "", printerCount = 0, jobCount = 0, hasFault = false })
 refresh()

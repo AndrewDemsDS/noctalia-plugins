@@ -47,7 +47,16 @@
     "printer_settings": "Printer settings",
     "print_clipboard": "Print clipboard",
     "refresh": "Refresh now",
-    "plugin_settings": "Plugin settings"
+    "plugin_settings": "Plugin settings",
+    "remove": "Remove printer",
+    "remove_confirm": "Confirm removing {printer}",
+    "add_printer": "Add a printer",
+    "add": "Add",
+    "already_added": "Already set up as a queue",
+    "will_be_named": "will be added as {name}",
+    "no_devices": "No printers found on the network or USB",
+    "add_note": "Added as driverless IPP Everywhere queues. A printer that needs a vendor driver has to be set up in Printer settings instead.",
+    "queued_as": "already set up as {name}"
   },
   "notifications": {
     "printer_stopped": "{printer} has stopped. Check the printer, then re-enable it from CUPS.",
@@ -58,6 +67,10 @@
     "status": {
       "one": "{printer} · {count} job queued",
       "other": "{printer} · {count} jobs queued"
-    }
+    },
+    "added": "{printer} added.",
+    "add_failed": "Could not add {printer}.",
+    "removed": "{printer} removed.",
+    "remove_failed": "Could not remove {printer}."
   }
 }
