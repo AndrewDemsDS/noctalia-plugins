@@ -12,7 +12,7 @@ Plugins for the [Noctalia](https://github.com/noctalia-dev/noctalia) shell.
 Add this checkout as a plugin source, then enable what you want:
 
 ```sh
-noctalia msg plugins source add andrewdems git https://github.com/AndrewDems/noctalia-plugins
+noctalia msg plugins source add andrewdems git https://github.com/AndrewDemsDS/noctalia-plugins
 noctalia msg plugins enable andrewdems/vpn-manager
 noctalia msg plugins enable andrewdems/printer
 ```
