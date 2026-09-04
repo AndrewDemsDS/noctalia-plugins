@@ -125,6 +125,35 @@ local function parsePrinters(stdout)
   return printers
 end
 
+-- `lpstat -e` lists every destination CUPS can print to, including driverless
+-- ones discovered over DNS-SD that have no permanent queue yet and so never
+-- appear in `lpstat -p`. One name per line.
+local function parseDestinations(stdout)
+  local names = {}
+  for _, line in ipairs(splitLines(stdout)) do
+    local name = trim(line)
+    if name ~= "" and name:match("^%S+$") ~= nil then
+      table.insert(names, name)
+    end
+  end
+  return names
+end
+
+-- Adds the discovered-only destinations to the configured ones, so a driverless
+-- printer is offered before CUPS has materialized a queue for it.
+local function mergeDiscovered(printers, names)
+  local known = {}
+  for _, p in ipairs(printers) do
+    known[p.name] = true
+  end
+  for _, name in ipairs(names) do
+    if known[name] == nil then
+      table.insert(printers, { name = name, state = "available", enabled = true, discovered = true })
+    end
+  end
+  return printers
+end
+
 -- "HP_Smart_Tank-42   andrewdems   12288   Thu 04 Sep 2026 09:12:03 PM EEST"
 local function parseJobs(stdout)
   local jobs = {}
@@ -182,17 +211,20 @@ local function publish(defaultPrinter, printers, jobs)
   })
 end
 
--- lpstat is called three times with plain argv rather than once behind a shell
+-- lpstat is called four times with plain argv rather than once behind a shell
 -- pipeline, so the plugin never needs /bin/sh.
 local function refresh()
   run({ "lpstat", "-d" }, function(defResult)
     local defaultPrinter = parseDefault(defResult.stdout)
     run({ "lpstat", "-p" }, function(printerResult)
       local printers = parsePrinters(printerResult.stdout)
-      run({ "lpstat", "-o" }, function(jobResult)
-        local jobs = parseJobs(jobResult.stdout)
-        notifyFaults(printers)
-        publish(defaultPrinter, printers, jobs)
+      run({ "lpstat", "-e" }, function(destResult)
+        printers = mergeDiscovered(printers, parseDestinations(destResult.stdout))
+        run({ "lpstat", "-o" }, function(jobResult)
+          local jobs = parseJobs(jobResult.stdout)
+          notifyFaults(printers)
+          publish(defaultPrinter, printers, jobs)
+        end)
       end)
     end)
   end)

@@ -41,7 +41,9 @@ Center; it opens the same panel.
 In the panel:
 
 - **Printers**: every CUPS destination with its state. The default is shown in
-  bold; **Set default** on any other row runs `lpoptions -d`.
+  bold; **Set default** on any other row runs `lpoptions -d`. A driverless
+  printer that CUPS has discovered but not yet added shows as *available, not
+  yet added*, and can be set as the default like any other.
 - **Queue**: the active jobs, newest CUPS order. The **×** on a row cancels that
   job; **Cancel all** asks for confirmation, then cancels the lot.
 - **Open CUPS** opens the CUPS web interface, **Printer settings** launches your
@@ -76,8 +78,8 @@ noctalia msg plugin andrewdems/printer:service all print-clipboard  # print the 
 
 ## Notes
 
-- **Processes.** The service spawns `lpstat -d`, `lpstat -p` and `lpstat -o` on
-  every poll, and `cancel`, `lpoptions -d`, `lp -d`, `xdg-open` or the configured
+- **Processes.** The service spawns `lpstat -d`, `lpstat -p`, `lpstat -e` and `lpstat -o`
+  on every poll, and `cancel`, `lpoptions -d`, `lp -d`, `xdg-open` or the configured
   settings command when you use an action. Every one is spawned as an argv list,
   never through a shell, so a printer or job name can never be interpreted as a
   command.
@@ -89,6 +91,11 @@ noctalia msg plugin andrewdems/printer:service all print-clipboard  # print the 
   handed to `xdg-open`, which opens it in your browser.
 - **Privacy.** No printer name, host or queue is stored in the plugin. Names come
   from `lpstat` at runtime and live only in the shell's memory.
+- **Driverless printers.** Destinations come from `lpstat -p` (configured
+  queues) merged with `lpstat -e` (everything CUPS can print to). An IPP
+  Everywhere printer found over DNS-SD appears in the second list only until
+  CUPS materializes a permanent queue for it, so without the merge it would be
+  missing from the panel on exactly the setups that need no configuration.
 - **Faults.** A printer is treated as faulted when `lpstat -p` reports it as
   `disabled` or `stopped`. CUPS keeps that state until you re-enable the printer,
   so the widget stays red until the underlying problem is cleared.

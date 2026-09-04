@@ -24,12 +24,13 @@ end
 local function printerRow(row)
   local isDefault = row.name == status.defaultPrinter
   local ok = row.enabled
+  local stateText = row.discovered and noctalia.tr("panel.discovered") or row.state
 
   local children = {
     ui.glyph({
       name = ok and "printer" or "printer-off",
       size = 16,
-      color = ok and "on_surface" or "error",
+      color = if not ok then "error" elseif row.discovered then "on_surface_variant" else "on_surface",
     }),
     ui.column({ gap = 1, flexGrow = 1 }, {
       ui.label({
@@ -39,7 +40,7 @@ local function printerRow(row)
         maxLines = 1,
       }),
       ui.label({
-        text = isDefault and noctalia.tr("panel.state_default", { state = row.state }) or row.state,
+        text = isDefault and noctalia.tr("panel.state_default", { state = stateText }) or stateText,
         fontSize = 11,
         color = ok and "on_surface_variant" or "error",
         maxLines = 1,

@@ -30,7 +30,8 @@
   },
   "panel": {
     "printers": "Printers",
-    "no_printers": "No printers configured",
+    "no_printers": "No printers found",
+    "discovered": "available, not yet added",
     "no_default": "no default printer",
     "set_default": "Set default",
     "state_default": "{state} · default",
