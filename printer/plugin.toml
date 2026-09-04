@@ -56,8 +56,8 @@ id = "service"
 entry = "service.luau"
 
 [[widget]]
-id = "bar"
-entry = "bar.luau"
+id = "printer"
+entry = "widget.luau"
 
 [[panel]]
 id = "panel"

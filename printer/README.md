@@ -13,7 +13,7 @@ configure: whatever destinations CUPS knows about are the ones you see.
 | Field | Value |
 | --- | --- |
 | ID | `andrewdems/printer` |
-| Entries | Bar widget: `bar`; panel: `panel`; service: `service`; shortcut: `toggle` |
+| Entries | Bar widget: `printer`; panel: `panel`; service: `service`; shortcut: `toggle` |
 
 ## Requirements
 
@@ -27,7 +27,7 @@ tool, or ignore the button.
 
 ## Usage
 
-Add the **Printers** widget under Settings → Bar (or put `andrewdems/printer:bar`
+Add the **Printers** widget under Settings → Bar (or put `andrewdems/printer:printer`
 in a bar's widget list in `config.toml`). By default it appears only when there
 is a job in the queue or a printer has stopped; turn on **Always show the bar
 widget** to keep it pinned. The glyph turns red and switches to a struck-through
