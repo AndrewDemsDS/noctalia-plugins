@@ -70,7 +70,7 @@ local function connectionRow(row)
         end,
       }),
       ui.button({
-        glyph = "close",
+        glyph = "x",
         variant = "ghost",
         controlSize = "sm",
         onClick = function()
@@ -184,7 +184,7 @@ local function addSection()
     ui.row({ align = "center", justify = "space_between" }, {
       ui.label({ text = "Add VPN", fontWeight = "bold", fontSize = 13, flexGrow = 1 }),
       ui.button({
-        glyph = "close",
+        glyph = "x",
         variant = "ghost",
         controlSize = "sm",
         onClick = function()
@@ -347,7 +347,7 @@ function render()
         end,
       }),
       ui.button({
-        glyph = "close",
+        glyph = "x",
         variant = "ghost",
         controlSize = "sm",
         onClick = function()

@@ -120,3 +120,8 @@ UUIDs are the ones `nmcli connection show` prints.
 - Trusted networks, the default VPN, and which VPN this plugin auto-started
   are stored under `noctalia.pluginDataDir()`, not in `plugin.toml` settings,
   since they're runtime lists edited from the panel.
+
+## AI assistance
+
+This plugin, and this README, were written with AI assistance. I run it on my
+own desktop and tested what shipped.

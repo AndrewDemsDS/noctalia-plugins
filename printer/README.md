@@ -125,3 +125,8 @@ noctalia msg plugin andrewdems/printer:service all print-clipboard  # print the 
   `disabled` or `stopped`, and a job is treated as failed when its CUPS alert
   mentions an error. CUPS keeps that state until you re-enable the printer,
   so the widget stays red until the underlying problem is cleared.
+
+## AI assistance
+
+This plugin, and this README, were written with AI assistance. I run it on my
+own desktop and tested what shipped.
