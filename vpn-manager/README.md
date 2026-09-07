@@ -77,9 +77,9 @@ In the panel:
   the panel. If the import fails, the panel reopens on this form with the
   reason and the file that failed, so you can pick a protocol explicitly and
   retry.
-- **Trusted networks** - list of Wi-Fi SSIDs / Ethernet connection names
-  where the VPN should stay off. One-click `Trust '<name>'` buttons appear
-  for whatever network you're currently on.
+- **Trusted networks** - list of Wi-Fi SSIDs / Ethernet or cellular connection
+  names where the VPN should stay off. One-click `Trust '<name>'` buttons
+  appear for whatever network you're currently on.
 
 Open or close the panel with:
 
@@ -91,8 +91,8 @@ noctalia msg panel-toggle andrewdems/vpn-manager:panel
 
 Turn on **Auto-connect on untrusted networks** in the plugin's settings
 (gear icon in the panel, or Settings → Plugins → VPN Manager) and star a
-connection to make it the default. Whenever the active Wi-Fi/Ethernet
-network isn't on your trusted list for `stable_checks` consecutive polls,
+connection to make it the default. Whenever the active Wi-Fi, Ethernet or
+cellular network isn't on your trusted list for `stable_checks` consecutive polls,
 that VPN is connected automatically; when you're back on a trusted network,
 it's disconnected automatically (only if this plugin was the one that
 started it - a VPN you connected by hand is left alone).

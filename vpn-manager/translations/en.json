@@ -7,7 +7,7 @@
   "settings": {
     "auto_connect_enabled": {
       "label": "Auto-connect on untrusted networks",
-      "description": "When enabled, connects your default VPN whenever you join a Wi-Fi or Ethernet network that isn't in your trusted list."
+      "description": "When enabled, connects your default VPN whenever you join a Wi-Fi, Ethernet or cellular network that isn't in your trusted list."
     },
     "auto_disconnect_on_trusted": {
       "label": "Auto-disconnect on trusted networks",
@@ -46,7 +46,7 @@
     "trusted_networks": "Trusted networks",
     "trusted_none": "None yet. VPN auto-connect (if enabled in Settings) treats every network as untrusted until you add one.",
     "trust_current": "+ Trust '{name}'",
-    "trust_placeholder": "SSID or Ethernet connection name",
+    "trust_placeholder": "SSID, Ethernet or cellular connection name",
     "plugin_settings": "Plugin settings",
     "details": "Connection details",
     "details_loading": "Reading connection details…",

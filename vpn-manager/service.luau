@@ -603,7 +603,7 @@ refreshAll = function()
         }
         if ctype == "vpn" or ctype == "wireguard" then
           table.insert(vpnRows, row)
-        elseif row.active and (ctype == "802-11-wireless" or ctype == "802-3-ethernet") then
+        elseif row.active and (ctype == "802-11-wireless" or ctype == "802-3-ethernet" or ctype == "gsm" or ctype == "cdma") then
           table.insert(physicalRows, row)
         end
       end
@@ -640,7 +640,7 @@ refreshAll = function()
         for _, row in ipairs(enrichedPhysicalRows) do
           table.insert(currentNetworks, {
             key = row.key,
-            kind = row.ctype == "802-11-wireless" and "wifi" or "ethernet",
+            kind = if row.ctype == "802-11-wireless" then "wifi" elseif row.ctype == "802-3-ethernet" then "ethernet" else "cellular",
             trusted = isTrusted(row.key) or (row.ctype == "802-3-ethernet" and cfgBool("trust_all_ethernet", true)),
           })
         end
