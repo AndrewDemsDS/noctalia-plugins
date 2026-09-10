@@ -25,6 +25,10 @@ The file picker used by **Add VPN** is `kdialog`, falling back to `zenity`.
 Neither is required either - without them you can still type a path or paste the
 configuration text.
 
+**Fortinet SSL VPN with SAML sign-in** needs `openfortivpn` 1.21 or newer,
+`pkexec` (polkit, with an agent running) and `xdg-open`. See
+[Fortinet SAML](#fortinet-saml).
+
 ## How it works
 
 This plugin does not implement any VPN protocol itself. It drives `nmcli`,
@@ -45,6 +49,7 @@ sudo pacman -S networkmanager-pptp         # PPTP
 sudo pacman -S networkmanager-openconnect  # Cisco AnyConnect
 sudo pacman -S networkmanager-vpnc         # Cisco legacy VPN
 sudo pacman -S networkmanager-sstp         # SSTP
+sudo pacman -S networkmanager-fortisslvpn  # Fortinet SSL VPN, username/password (AUR on Arch)
 ```
 
 WireGuard needs nothing extra; NetworkManager 1.16+ supports it natively.
@@ -91,6 +96,57 @@ noctalia msg panel-toggle andrewdems/vpn-manager:panel
 Typing `/vpn` in the launcher offers "Open VPN Manager" plus a
 connect/disconnect entry for every configured connection.
 
+## Fortinet SAML
+
+FortiGate SSL VPN with password or token login works through NetworkManager
+like any other protocol. Use `networkmanager-fortisslvpn`, or
+`networkmanager-openconnect` with its Fortinet protocol. **SAML / SSO sign-in
+is the exception.** Neither NetworkManager plugin supports it
+(`NetworkManager-fortisslvpn` is no longer maintained, and OpenConnect's
+Fortinet mode only supports password, certificate and token login). So for
+SAML this plugin runs [openfortivpn](https://github.com/adrienverge/openfortivpn)'s
+`--saml-login` itself. It is the one thing here that doesn't go through
+`nmcli`.
+
+```sh
+sudo pacman -S openfortivpn
+```
+
+Add a profile under **Add VPN → Fortinet SSL VPN with SAML sign-in**: the
+gateway (`vpn.example.com` or `vpn.example.com:10443`), plus an optional name,
+realm and trusted certificate digest. Profiles are stored in the plugin's own
+data file, not in NetworkManager. They appear in the connection list, the
+launcher and the bar like any other VPN.
+
+When you connect:
+
+1. polkit asks for your password, because `openfortivpn` runs `pppd` and
+   needs root. It runs as `pkexec openfortivpn <gateway> --saml-login`.
+2. Your default browser opens the gateway's SAML page. Sign in with your
+   identity provider (MFA, passkeys and saved logins all work, since it's
+   your own browser). The gateway redirects back to openfortivpn's listener on
+   `127.0.0.1:8020`. The row's link button reopens the page if you closed it.
+3. The tunnel comes up and the row turns on.
+
+Notes:
+
+- openfortivpn only waits about 50 seconds for the browser redirect. If
+  sign-in takes longer, connect again: the IdP session from the first try
+  usually makes the second one instant.
+- Disconnecting sends `SIGTERM` to openfortivpn via `pkexec kill`, so polkit
+  asks again, because the tunnel is a root process. Toggling off during
+  sign-in cancels it.
+- If the gateway's certificate isn't trusted by the system, the error shows
+  the sha256 digest openfortivpn reports. Once you've checked it, delete the
+  profile and re-add it with that digest in the trusted cert field.
+- DNS and routing are handled by openfortivpn itself, not NetworkManager. It
+  still reads `/etc/openfortivpn/config`, so put options such as
+  `set-dns`/`pppd-use-peerdns` there if your resolver setup needs them.
+- A Fortinet SAML profile can't be the auto-connect default, because SAML
+  needs someone at a browser. Auto-connect never prompts.
+- A tunnel keeps running if Noctalia reloads the plugin. The service finds it
+  again by its gateway argument (`pgrep`) and can still disconnect it.
+
 ## Auto-connect on untrusted networks
 
 Turn on **Auto-connect on untrusted networks** in the plugin's settings
@@ -129,7 +185,8 @@ noctalia msg plugin andrewdems/vpn-manager:service all dismiss-error      # clea
 noctalia msg plugin andrewdems/vpn-manager:service all list               # log the known connections
 ```
 
-UUIDs are the ones `nmcli connection show` prints.
+UUIDs are the ones `nmcli connection show` prints. A Fortinet SAML profile's
+id is `forti-<n>`, as logged by `list`.
 
 ## Notes
 
