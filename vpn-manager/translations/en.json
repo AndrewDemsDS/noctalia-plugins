@@ -38,7 +38,7 @@
     "path_placeholder": "~/Downloads/client.ovpn",
     "import": "Import",
     "or_paste": "or paste a config",
-    "paste_placeholder": "[Interface] / [Peer] for WireGuard, or full .ovpn contents",
+    "paste_placeholder": "[Interface] / [Peer] for WireGuard, full .ovpn contents, or an openfortivpn config (host = ...)",
     "import_pasted": "Import Pasted Config",
     "manual_note": "PPTP, L2TP/IPsec and IKEv2 usually need fields typed in rather than a file - create those with nmtui or nm-connection-editor and they'll appear above automatically.",
     "no_connections": "No VPN connections yet. Import one below, or create one with nmtui and it will show up here.",
@@ -80,14 +80,13 @@
     "import_failed": "Import failed",
     "dismiss": "Dismiss",
     "forti_title": "Fortinet SSL VPN with SAML sign-in",
-    "forti_note": "Runs openfortivpn directly (NetworkManager's Fortinet plugins can't do SAML). Connecting asks for your password via polkit, then opens the sign-in page in your browser - finish it within about 50 seconds.",
+    "forti_note": "Runs openfortivpn directly (NetworkManager's Fortinet plugins can't do SAML). Connecting asks for your password via polkit, then opens the sign-in page in your browser - finish it within about 50 seconds. An openfortivpn config file can also be imported above.",
     "forti_missing": "Needs openfortivpn 1.21+ and pkexec (polkit). On Arch: sudo pacman -S openfortivpn",
     "forti_gateway_placeholder": "Gateway, e.g. vpn.example.com:10443",
     "forti_name_placeholder": "Name (optional)",
     "forti_realm_placeholder": "Realm (optional)",
     "forti_cert_placeholder": "Trusted cert sha256 (only if self-signed)",
     "forti_add": "Add Fortinet Profile",
-    "forti_badge": "Fortinet SAML (openfortivpn)",
     "forti_open_login": "Open the sign-in page again",
     "forti_phase": {
       "auth": "Waiting for polkit authorization…",
@@ -111,7 +110,7 @@
     "auto_disconnect_failed": "VPN auto-disconnect failed",
     "delete_failed": "Could not delete VPN",
     "import_failed": "Could not import VPN",
-    "detect_failed": "Couldn't detect the protocol. Pick one explicitly (OpenVPN, WireGuard, OpenConnect, vpnc) and try again.",
+    "detect_failed": "Couldn't detect the protocol. Pick one explicitly (OpenVPN, WireGuard, OpenConnect, vpnc, openfortivpn) and try again.",
     "imported": "Imported {name}.",
     "a_connection": "connection",
     "no_path": "Enter a file path first.",
@@ -140,6 +139,7 @@
     "forti_dropped": "Fortinet VPN disconnected",
     "forti_sign_in": "Sign in to {name} in your browser.",
     "forti_connected": "Connected {name}.",
-    "forti_disconnect_first": "Disconnect it first."
+    "forti_disconnect_first": "Disconnect it first.",
+    "forti_no_host": "No 'host = ...' line found in the openfortivpn config."
   }
 }

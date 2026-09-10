@@ -19,6 +19,7 @@ local IMPORT_TYPES = {
   { label = "WireGuard (.conf)", value = "wireguard" },
   { label = "Cisco AnyConnect (openconnect)", value = "openconnect" },
   { label = "Cisco legacy VPN (vpnc)", value = "vpnc" },
+  { label = "Fortinet SAML (openfortivpn config)", value = "openfortivpn" },
 }
 local importTypeIndex = 0
 local pathDraft = ""
@@ -283,10 +284,6 @@ local function addSection()
       }))
     end
   end
-  table.insert(protoNote, ui.row({ gap = 4, align = "center" }, {
-    protocolBadge(availableProtocols.openfortivpn == true),
-    ui.label({ text = noctalia.tr("panel.forti_badge"), fontSize = 10, color = "on_surface_variant" }),
-  }))
   -- no wrap support on ui.row: lay badges out two per row instead of one long strip
   local protoRows = {}
   for i = 1, #protoNote, 2 do

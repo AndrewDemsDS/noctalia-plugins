@@ -118,6 +118,28 @@ realm and trusted certificate digest. Profiles are stored in the plugin's own
 data file, not in NetworkManager. They appear in the connection list, the
 launcher and the bar like any other VPN.
 
+You can also **import an openfortivpn config file** with the normal Add VPN
+import (file picker, typed path, pasted text or the `import` IPC). Choose
+**Fortinet SAML (openfortivpn config)**, or let auto-detect find the
+`host = …` line. The profile takes `host`, `port`, `realm` and the first
+`trusted-cert`. It never reads or stores `username`, `password`, `otp`,
+`cookie` or `user-key`. The file name becomes the profile name
+(`UCY VPN.conf` → *UCY VPN*). Importing again for the same gateway and realm
+updates that profile, e.g. to swap in a renewed certificate pin:
+
+```ini
+host = vpn.example.com
+port = 10443
+realm = staff
+trusted-cert = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+A gateway that doesn't send its intermediate certificate fails OpenSSL
+verification even when the chain is valid. openfortivpn then prints the
+leaf's sha256 digest. Check it before pinning, for example:
+`openssl x509 -in leaf.pem -noout -fingerprint -sha256`, after verifying the
+leaf against the intermediate from its AIA URL.
+
 When you connect:
 
 1. polkit asks for your password, because `openfortivpn` runs `pppd` and

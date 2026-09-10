@@ -152,6 +152,11 @@ local function detectImportType(content)
   if content:match("^%s*client") or content:match("\nremote%s+%S") or content:match("<ca>") or content:match("%-%-%-%-%-BEGIN CERTIFICATE") then
     return "openvpn"
   end
+  -- openfortivpn config: `host = ...` (checked after OpenVPN/WireGuard, which
+  -- never use that key).
+  if content:match("^%s*host%s*=") or content:match("\n%s*host%s*=") then
+    return "openfortivpn"
+  end
   return nil
 end
 
@@ -505,37 +510,99 @@ local function parseGateway(text)
   return host:lower(), tonumber(port)
 end
 
-local function addFortiProfile(cmd)
-  local name = trim(cmd.name)
-  local host, port = parseGateway(cmd.gateway or "")
-  local realm = trim(cmd.realm)
-  local cert = trim(cmd.trustedCert):lower():gsub(":", "")
-  local problem = nil
+-- Validates { name, gateway, realm, trustedCert } and stores it. A profile for
+-- the same gateway and realm is updated in place rather than duplicated, so
+-- re-importing after the gateway's certificate is renewed just swaps the pin.
+-- Returns the stored profile, or nil and a user-facing reason.
+local function saveFortiProfile(fields)
+  local name = trim(fields.name)
+  local host, port = parseGateway(fields.gateway or "")
+  local realm = trim(fields.realm)
+  local cert = trim(fields.trustedCert):lower():gsub(":", "")
   if not validHost(host) or not validPort(port) then
-    problem = noctalia.tr("notifications.forti_bad_gateway")
+    return nil, noctalia.tr("notifications.forti_bad_gateway")
   elseif not validRealm(realm) then
-    problem = noctalia.tr("notifications.forti_bad_realm")
+    return nil, noctalia.tr("notifications.forti_bad_realm")
   elseif not validCert(cert) then
-    problem = noctalia.tr("notifications.forti_bad_cert")
-  end
-  if problem ~= nil then
-    noctalia.notifyError(noctalia.tr("notifications.forti_add_failed"), problem)
-    return
+    return nil, noctalia.tr("notifications.forti_bad_cert")
   end
   if name == "" then
     name = host
   end
-  table.insert(data.fortiProfiles, {
-    id = tostring(math.floor(noctalia.nowMs())),
-    name = name:sub(1, 64),
-    host = host,
-    port = port,
-    realm = realm,
-    trustedCert = cert,
-  })
+  local profile = nil
+  for _, existing in ipairs(data.fortiProfiles) do
+    if existing.host == host and existing.port == port and (existing.realm or "") == realm then
+      profile = existing
+    end
+  end
+  if profile == nil then
+    profile = { id = tostring(math.floor(noctalia.nowMs())) }
+    table.insert(data.fortiProfiles, profile)
+  end
+  profile.name = name:sub(1, 64)
+  profile.host = host
+  profile.port = port
+  profile.realm = realm
+  profile.trustedCert = cert
   saveData()
-  noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.forti_added", { name = name }))
   publishConnections()
+  return profile
+end
+
+local function addFortiProfile(cmd)
+  local profile, problem = saveFortiProfile(cmd)
+  if profile == nil then
+    noctalia.notifyError(noctalia.tr("notifications.forti_add_failed"), problem)
+    return
+  end
+  noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.forti_added", { name = profile.name }))
+end
+
+-- Reads the connection keys of an openfortivpn config (`key = value`, `#`
+-- comments). Credentials (username, password, otp, cookie, user-key) are
+-- deliberately ignored: SAML does not use them and this plugin stores no
+-- secrets. The first valid trusted-cert wins, since a profile pins one.
+local function parseOpenfortivpnConfig(content)
+  local fields = { host = nil, port = nil, realm = "", trustedCert = "" }
+  for line in content:gmatch("[^\r\n]+") do
+    local key, value = line:match("^%s*([%w%-]+)%s*=%s*(.-)%s*$")
+    if key ~= nil and not line:match("^%s*#") then
+      key = key:lower()
+      if key == "host" then
+        fields.host = value
+      elseif key == "port" then
+        fields.port = value
+      elseif key == "realm" then
+        fields.realm = value
+      elseif key == "trusted-cert" and fields.trustedCert == "" and validCert(value:lower()) then
+        fields.trustedCert = value
+      end
+    end
+  end
+  if fields.host == nil or fields.host == "" then
+    return nil
+  end
+  return fields
+end
+
+-- Name comes from the file ("UCY VPN.conf" -> "UCY VPN"); a pasted config's
+-- temp file carries no useful name, so that falls back to the gateway.
+local function importOpenfortivpnConfig(path, content, isTemp)
+  local fields = type(content) == "string" and parseOpenfortivpnConfig(content) or nil
+  if fields == nil then
+    return nil, noctalia.tr("notifications.forti_no_host")
+  end
+  local base = (path:match("([^/]+)$") or ""):gsub("%.[^.]*$", "")
+  local gateway = fields.host
+  if fields.port ~= nil and fields.port ~= "" then
+    gateway = `{fields.host}:{fields.port}`
+  end
+  return saveFortiProfile({
+    name = if isTemp or base == "config" then "" else base,
+    gateway = gateway,
+    realm = fields.realm,
+    trustedCert = fields.trustedCert,
+  })
 end
 
 local function finishFortiRun(profile, code)
@@ -753,6 +820,18 @@ local function finishImport(path, typeArg, isTemp)
     if resolvedType == nil then
       importFailed(noctalia.tr("notifications.detect_failed"), path)
       cleanup()
+      return
+    end
+    -- Not a NetworkManager connection: becomes a Fortinet SAML profile.
+    if resolvedType == "openfortivpn" then
+      local profile, problem = importOpenfortivpnConfig(path, noctalia.readFile(path), isTemp)
+      cleanup()
+      if profile == nil then
+        importFailed(problem, if isTemp then "" else path)
+        return
+      end
+      noctalia.state.set("vpn.lastImport", { ok = true, reason = "", path = "", at = os.time() })
+      noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.imported", { name = profile.name }))
       return
     end
     run({ "nmcli", "connection", "import", "type", resolvedType, "file", path }, function(result)
@@ -1084,7 +1163,7 @@ local function startFilePicker()
 
   local picker, pickerBinary, pickerNeedle
   if noctalia.commandExists("kdialog") then
-    picker = "kdialog --getopenfilename ~ '*.ovpn *.conf *.zip|VPN configurations'"
+    picker = "kdialog --getopenfilename ~ '*.ovpn *.conf *.zip config|VPN configurations'"
     pickerBinary, pickerNeedle = "kdialog", "--getopenfilename"
   elseif noctalia.commandExists("zenity") then
     picker = "zenity --file-selection --title='Select a VPN configuration'"
