@@ -179,6 +179,10 @@ that VPN is connected automatically; when you're back on a trusted network,
 it's disconnected automatically (only if this plugin was the one that
 started it - a VPN you connected by hand is left alone).
 
+Turning the default VPN off yourself while auto-connect is on pauses
+auto-connect until your network changes (a different Wi-Fi, a cable
+plugged in, and so on). Otherwise it would reconnect a few seconds later.
+
 Wired Ethernet is trusted by default (**Treat any wired connection as
 trusted**); turn that off if you plug into untrusted wired networks too.
 
