@@ -231,6 +231,11 @@ local trustedStreak = 0
 -- would be retried every few seconds and notify each time. A failed automatic
 -- attempt backs off until this timestamp.
 local autoConnectBlockedUntil = 0
+-- Turning the default VPN off by hand on an untrusted network must stick:
+-- otherwise auto-connect brings it straight back a few polls later. Holds the
+-- network signature it was turned off on; a different network clears it.
+local autoConnectPausedFor = nil
+local currentNetworkSignature = ""
 local AUTO_RETRY_BACKOFF_SECONDS = 300
 local tickCount = 0
 
@@ -352,6 +357,10 @@ end
 local function disconnectUuid(uuid, isAuto)
   if uuid == nil or uuid == "" or opInFlight[uuid] then
     return
+  end
+  if not isAuto and uuid == data.defaultVpnUuid and cfgBool("auto_connect_enabled", false) then
+    autoConnectPausedFor = currentNetworkSignature
+    log("default VPN disconnected by hand - auto-connect paused until the network changes")
   end
   opInFlight[uuid] = true
   publishConnections()
@@ -490,7 +499,7 @@ local function maybeAutoConnect()
   if not cfgBool("auto_connect_enabled", false) then
     return
   end
-  if os.time() < autoConnectBlockedUntil then
+  if os.time() < autoConnectBlockedUntil or autoConnectPausedFor ~= nil then
     return
   end
   local uuid = data.defaultVpnUuid
@@ -540,6 +549,17 @@ local function maybeAutoDisconnect()
 end
 
 local function evaluateTrust(physicalRows)
+  local keys = {}
+  for _, row in ipairs(physicalRows) do
+    table.insert(keys, row.key or row.name)
+  end
+  table.sort(keys)
+  currentNetworkSignature = table.concat(keys, "\n")
+  if autoConnectPausedFor ~= nil and autoConnectPausedFor ~= currentNetworkSignature then
+    log("network changed - auto-connect resumes")
+    autoConnectPausedFor = nil
+  end
+
   if #physicalRows == 0 then
     untrustedStreak = 0
     trustedStreak = 0
