@@ -19,7 +19,6 @@ local IMPORT_TYPES = {
   { label = "WireGuard (.conf)", value = "wireguard" },
   { label = "Cisco AnyConnect (openconnect)", value = "openconnect" },
   { label = "Cisco legacy VPN (vpnc)", value = "vpnc" },
-  { label = "Fortinet SAML (openfortivpn config)", value = "openfortivpn" },
 }
 local importTypeIndex = 0
 local pathDraft = ""
@@ -28,13 +27,6 @@ local lastImport = { ok = true, reason = "", path = "", at = 0 }
 local pathKey = 0
 local pasteDraft = ""
 local pasteKey = 0
-
--- Fortinet SAML profiles live in the service's own data, not NetworkManager.
-local fortiName = ""
-local fortiGateway = ""
-local fortiRealm = ""
-local fortiCert = ""
-local fortiKey = 0
 
 local showTrust = false
 local trustDraft = ""
@@ -65,14 +57,9 @@ local function protocolBadge(available)
   })
 end
 
-local function isForti(row)
-  return row.ctype == "forti-saml"
-end
-
 local function detailsBlock(uuid, row)
   local lines = {}
-  local forti = isForti(row)
-  if not row.active and not forti then
+  if not row.active then
     table.insert(lines, ui.label({
       text = noctalia.tr("panel.details_inactive"),
       fontSize = 11,
@@ -92,11 +79,6 @@ local function detailsBlock(uuid, row)
         ui.label({ text = d.value, fontSize = 11, flexGrow = 1, maxLines = 1 }),
       }))
     end
-  end
-
-  -- A Fortinet profile is just gateway/realm/cert: delete and re-add to change it.
-  if forti then
-    return ui.column({ gap = 4, paddingH = 4 }, lines)
   end
 
   table.insert(lines, ui.button({
@@ -142,24 +124,8 @@ local function connectionRow(row)
       }),
     })
   else
-    local forti = isForti(row)
-    -- SAML needs a person at a browser, so a Fortinet profile cannot be the
-    -- auto-connect default; while it signs in it offers the page again instead.
-    local lead
-    if forti and (row.loginUrl or "") ~= "" then
-      lead = ui.button({
-        glyph = "external-link",
-        variant = "ghost",
-        controlSize = "sm",
-        tooltip = noctalia.tr("panel.forti_open_login"),
-        onClick = function()
-          noctalia.state.set("vpn.cmd", { op = "fortiOpenLogin", uuid = uuid })
-        end,
-      })
-    elseif forti then
-      lead = ui.box({ width = 28, height = 1 })
-    else
-      lead = ui.button({
+    trailing = ui.row({ gap = 2, align = "center" }, {
+      ui.button({
         glyph = if row.isDefault then "star-filled" else "star",
         variant = "ghost",
         controlSize = "sm",
@@ -167,16 +133,12 @@ local function connectionRow(row)
         onClick = function()
           noctalia.state.set("vpn.cmd", { op = "setDefault", uuid = if row.isDefault then "" else uuid })
         end,
-      })
-    end
-    trailing = ui.row({ gap = 2, align = "center" }, {
-      lead,
+      }),
       ui.toggle({
-        checked = row.active or row.pending == true,
+        checked = row.active,
         enabled = not row.busy,
         onChange = function(_value)
-          -- A pending Fortinet sign-in is cancelled the same way it is disconnected.
-          if row.active or row.pending then
+          if row.active then
             noctalia.state.set("vpn.cmd", { op = "disconnect", uuid = uuid })
           else
             noctalia.state.set("vpn.cmd", { op = "connect", uuid = uuid })
@@ -213,19 +175,14 @@ local function connectionRow(row)
     })
   end
 
-  local subtitle = row.protocol
-  if row.pending and (row.phase or "") ~= "" then
-    subtitle = noctalia.tr("panel.forti_phase." .. row.phase)
-  end
-
   local header = ui.row({
     gap = 8,
     align = "center",
   }, {
-    statusDot(row.active, row.busy or row.pending == true),
+    statusDot(row.active, row.busy),
     ui.column({ flexGrow = 1, gap = 1 }, {
       ui.label({ text = row.name, fontWeight = "bold", fontSize = 13 }),
-      ui.label({ text = subtitle, color = "on_surface_variant", fontSize = 10 }),
+      ui.label({ text = row.protocol, color = "on_surface_variant", fontSize = 10 }),
     }),
     trailing,
   })
@@ -402,52 +359,6 @@ local function addSection()
       color = "on_surface_variant",
       maxLines = 4,
     }),
-    ui.separator({}),
-    ui.label({ text = noctalia.tr("panel.forti_title"), fontSize = 12, fontWeight = "bold" }),
-    ui.label({
-      text = noctalia.tr(availableProtocols.openfortivpn == true and "panel.forti_note" or "panel.forti_missing"),
-      fontSize = 10,
-      color = "on_surface_variant",
-      maxLines = 4,
-    }),
-    ui.input({
-      key = "forti-gateway-" .. fortiKey,
-      value = fortiGateway,
-      placeholder = noctalia.tr("panel.forti_gateway_placeholder"),
-      onChange = function(value)
-        fortiGateway = value
-      end,
-    }),
-    ui.row({ gap = 6 }, {
-      ui.input({
-        key = "forti-name-" .. fortiKey,
-        value = fortiName,
-        placeholder = noctalia.tr("panel.forti_name_placeholder"),
-        flexGrow = 1,
-        onChange = function(value)
-          fortiName = value
-        end,
-      }),
-      ui.input({
-        key = "forti-realm-" .. fortiKey,
-        value = fortiRealm,
-        placeholder = noctalia.tr("panel.forti_realm_placeholder"),
-        flexGrow = 1,
-        onChange = function(value)
-          fortiRealm = value
-        end,
-      }),
-    }),
-    ui.input({
-      key = "forti-cert-" .. fortiKey,
-      value = fortiCert,
-      placeholder = noctalia.tr("panel.forti_cert_placeholder"),
-      onChange = function(value)
-        fortiCert = value
-      end,
-      onSubmit = "onFortiAdd",
-    }),
-    ui.button({ text = noctalia.tr("panel.forti_add"), variant = "primary", onClick = "onFortiAdd" }),
   }
 
   -- A failed import is shown above the form, since the picker closes the panel
@@ -611,23 +522,6 @@ function onImportPaste()
   render()
 end
 
-function onFortiAdd()
-  if noctalia.string.trim(fortiGateway) == "" then
-    return
-  end
-  noctalia.state.set("vpn.cmd", {
-    op = "fortiAdd",
-    name = fortiName,
-    gateway = fortiGateway,
-    realm = fortiRealm,
-    trustedCert = fortiCert,
-  })
-  fortiName, fortiGateway, fortiRealm, fortiCert = "", "", "", ""
-  fortiKey += 1
-  showAdd = false
-  render()
-end
-
 function onTrustAdd()
   local name = noctalia.string.trim(trustDraft)
   if name ~= "" then
@@ -684,11 +578,6 @@ end)
 
 noctalia.state.watch("vpn.connections", function(value)
   connections = type(value) == "table" and value or {}
-  -- Fortinet details are the service's own data, so re-reading them as the
-  -- sign-in advances costs no process.
-  if expandedUuid ~= nil and expandedUuid:sub(1, 6) == "forti-" then
-    noctalia.state.set("vpn.cmd", { op = "details", uuid = expandedUuid })
-  end
   render()
 end)
 

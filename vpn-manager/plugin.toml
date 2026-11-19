@@ -11,12 +11,11 @@ plugin_api   = 24
 author       = "andrewdems"
 license      = "MIT"
 icon         = "shield-lock"
-description  = "Connect, disconnect and import NetworkManager VPNs of any protocol, plus Fortinet SAML via openfortivpn, with auto-connect off trusted networks."
+description  = "Connect, disconnect and import NetworkManager VPNs of any protocol, with auto-connect off trusted networks."
 tags         = ["bar", "launcher", "panel", "service", "shortcut", "network", "privacy", "indicator"]
 # nmcli is required; nm-connection-editor/nmtui-edit (Edit connection) and kdialog/zenity
 # (Add VPN's file picker) are optional fallbacks documented in the README - see Requirements there.
-# openfortivpn/pkexec/xdg-open are only needed for Fortinet SAML profiles.
-dependencies = ["nmcli", "nm-connection-editor", "nmtui-edit", "kdialog", "zenity", "openfortivpn", "pkexec", "xdg-open"]
+dependencies = ["nmcli", "nm-connection-editor", "nmtui-edit", "kdialog", "zenity"]
 
 [[setting]]
 key = "auto_connect_enabled"

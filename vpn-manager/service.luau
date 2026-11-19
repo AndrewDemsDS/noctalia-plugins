@@ -34,15 +34,6 @@ local PACKAGE_HINTS = {
 
 local VPN_PLUGIN_DIRS = { "/usr/lib64/NetworkManager/VPN", "/usr/lib/NetworkManager/VPN" }
 
--- Fortinet SAML runs openfortivpn directly: neither NetworkManager-fortisslvpn
--- nor openconnect's fortinet protocol can do SAML sign-in. Profiles are this
--- plugin's own data, and their row ids carry this prefix so they can never be
--- mistaken for (or validated as) a NetworkManager UUID.
-local FORTI_PREFIX = "forti-"
-local FORTI_LABEL = "Fortinet SSL VPN (SAML)"
-local OPENFORTIVPN_PATHS = { "/usr/bin/openfortivpn", "/usr/sbin/openfortivpn", "/usr/local/bin/openfortivpn", "/usr/local/sbin/openfortivpn" }
-local STREAM_TAG = "vpn-manager:"
-
 -- ── small helpers ────────────────────────────────────────────────────────
 
 local function log(msg)
@@ -60,10 +51,6 @@ local function firstLine(s)
     return s:sub(1, nl - 1)
   end
   return s
-end
-
-local function shellQuote(value)
-  return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end
 
 local function clampInt(v, lo, hi, default)
@@ -152,11 +139,6 @@ local function detectImportType(content)
   if content:match("^%s*client") or content:match("\nremote%s+%S") or content:match("<ca>") or content:match("%-%-%-%-%-BEGIN CERTIFICATE") then
     return "openvpn"
   end
-  -- openfortivpn config: `host = ...` (checked after OpenVPN/WireGuard, which
-  -- never use that key).
-  if content:match("^%s*host%s*=") or content:match("\n%s*host%s*=") then
-    return "openfortivpn"
-  end
   return nil
 end
 
@@ -166,7 +148,6 @@ local data = {
   trustedNetworks = {},
   defaultVpnUuid = "",
   autoStartedUuid = "",
-  fortiProfiles = {}, -- { id, name, host, port, realm, trustedCert }
 }
 
 local function dataPath()
@@ -210,9 +191,6 @@ local function loadData()
   if type(decoded.autoStartedUuid) == "string" then
     data.autoStartedUuid = decoded.autoStartedUuid
   end
-  if type(decoded.fortiProfiles) == "table" then
-    data.fortiProfiles = decoded.fortiProfiles
-  end
 end
 
 local function isTrusted(name)
@@ -226,20 +204,8 @@ end
 
 -- ── installed VPN plugin detection ──────────────────────────────────────
 
--- pkexec wants an absolute program path, so resolve it rather than relying on
--- PATH inside the privileged environment.
-local function fortiBinary()
-  for _, path in ipairs(OPENFORTIVPN_PATHS) do
-    if noctalia.fileExists(path) then
-      return path
-    end
-  end
-  return nil
-end
-
 local function publishAvailableProtocols()
   local available = { wireguard = true } -- always native/built in
-  available.openfortivpn = fortiBinary() ~= nil and noctalia.commandExists("pkexec")
   for _, dir in ipairs(VPN_PLUGIN_DIRS) do
     local entries = noctalia.listDir(dir)
     if entries ~= nil then
@@ -265,18 +231,8 @@ local trustedStreak = 0
 -- would be retried every few seconds and notify each time. A failed automatic
 -- attempt backs off until this timestamp.
 local autoConnectBlockedUntil = 0
--- Turning the default VPN off by hand on an untrusted network must stick:
--- otherwise auto-connect brings it straight back a few polls later. Holds the
--- network signature it was turned off on; a different network clears it.
-local autoConnectPausedFor = nil
-local currentNetworkSignature = ""
 local AUTO_RETRY_BACKOFF_SECONDS = 300
 local tickCount = 0
--- profile id -> { phase = "auth"|"browser"|"connecting"|"up", pid, url,
--- stopping, certDigest, lastError, orphan }. phase "auth" is the polkit
--- prompt; an orphan is a tunnel found running after a plugin reload, with no
--- output stream attached.
-local fortiRuns = {}
 
 -- NetworkManager UUIDs are hex and dashes. Validated before a UUID is ever
 -- interpolated into a terminal command, the only place this plugin builds a
@@ -311,24 +267,6 @@ local function nameForUuid(uuid)
   return nil
 end
 
--- Returns the profile for a "forti-<id>" row id, or nil for anything else.
-local function fortiProfileFor(uuid)
-  if type(uuid) ~= "string" or uuid:sub(1, #FORTI_PREFIX) ~= FORTI_PREFIX then
-    return nil
-  end
-  local id = uuid:sub(#FORTI_PREFIX + 1)
-  for i, profile in ipairs(data.fortiProfiles) do
-    if profile.id == id then
-      return profile, i
-    end
-  end
-  return nil
-end
-
-local function isFortiId(uuid)
-  return type(uuid) == "string" and uuid:sub(1, #FORTI_PREFIX) == FORTI_PREFIX
-end
-
 local function publishConnections()
   local rows = {}
   local activeNames = {}
@@ -344,26 +282,6 @@ local function publishConnections()
     })
     if row.active then
       table.insert(activeNames, row.name)
-    end
-  end
-  for _, profile in ipairs(data.fortiProfiles) do
-    local st = fortiRuns[profile.id]
-    local up = st ~= nil and st.phase == "up"
-    table.insert(rows, {
-      uuid = FORTI_PREFIX .. profile.id,
-      name = profile.name,
-      protocol = FORTI_LABEL,
-      ctype = "forti-saml",
-      active = up,
-      -- Started but not up yet: polkit prompt, browser sign-in or tunnel setup.
-      pending = st ~= nil and not up,
-      phase = st ~= nil and st.phase or "",
-      loginUrl = st ~= nil and st.phase == "browser" and st.url or "",
-      isDefault = false,
-      busy = st ~= nil and st.stopping == true,
-    })
-    if up then
-      table.insert(activeNames, profile.name)
     end
   end
   table.sort(rows, function(a, b)
@@ -474,333 +392,6 @@ local function deleteUuid(uuid)
   end)
 end
 
--- ── Fortinet SAML (openfortivpn, outside NetworkManager) ─────────────────
---
--- openfortivpn --saml-login listens on 127.0.0.1:8020 and logs
--- "Authenticate at '<url>'"; the gateway redirects the browser back to that
--- listener after IdP sign-in. It needs root (pppd), so it runs under pkexec.
--- Profile fields end up in a shell string (runStream only takes one), so
--- they are validated here, again at connect time, and shell-quoted.
-
-local function validHost(host)
-  return type(host) == "string" and #host > 0 and #host <= 253 and host:match("^[%w][%w%.%-]*$") ~= nil
-end
-
-local function validPort(port)
-  port = tonumber(port)
-  return port ~= nil and port == math.floor(port) and port >= 1 and port <= 65535
-end
-
-local function validRealm(realm)
-  return realm == "" or (type(realm) == "string" and #realm <= 64 and realm:match("^[%w%._%-]+$") ~= nil)
-end
-
-local function validCert(cert)
-  return cert == "" or (type(cert) == "string" and cert:match("^%x+$") ~= nil and #cert == 64)
-end
-
-local function validProfile(p)
-  return type(p) == "table" and validHost(p.host) and validPort(p.port) and validRealm(p.realm or "") and validCert(p.trustedCert or "")
-end
-
--- Accepts "vpn.example.com", "vpn.example.com:10443" or a pasted
--- "https://vpn.example.com:10443/remote/login" and returns host, port.
-local function parseGateway(text)
-  text = trim(text):gsub("^%a+://", "")
-  text = text:gsub("[/?#].*$", "")
-  local host, port = text:match("^([^:]+):(%d+)$")
-  if host == nil then
-    host, port = text, "443"
-  end
-  return host:lower(), tonumber(port)
-end
-
--- Validates { name, gateway, realm, trustedCert } and stores it. A profile for
--- the same gateway and realm is updated in place rather than duplicated, so
--- re-importing after the gateway's certificate is renewed just swaps the pin.
--- Returns the stored profile, or nil and a user-facing reason.
-local function saveFortiProfile(fields)
-  local name = trim(fields.name)
-  local host, port = parseGateway(fields.gateway or "")
-  local realm = trim(fields.realm)
-  local cert = trim(fields.trustedCert):lower():gsub(":", "")
-  if not validHost(host) or not validPort(port) then
-    return nil, noctalia.tr("notifications.forti_bad_gateway")
-  elseif not validRealm(realm) then
-    return nil, noctalia.tr("notifications.forti_bad_realm")
-  elseif not validCert(cert) then
-    return nil, noctalia.tr("notifications.forti_bad_cert")
-  end
-  if name == "" then
-    name = host
-  end
-  local profile = nil
-  for _, existing in ipairs(data.fortiProfiles) do
-    if existing.host == host and existing.port == port and (existing.realm or "") == realm then
-      profile = existing
-    end
-  end
-  if profile == nil then
-    profile = { id = tostring(math.floor(noctalia.nowMs())) }
-    table.insert(data.fortiProfiles, profile)
-  end
-  profile.name = name:sub(1, 64)
-  profile.host = host
-  profile.port = port
-  profile.realm = realm
-  profile.trustedCert = cert
-  saveData()
-  publishConnections()
-  return profile
-end
-
-local function addFortiProfile(cmd)
-  local profile, problem = saveFortiProfile(cmd)
-  if profile == nil then
-    noctalia.notifyError(noctalia.tr("notifications.forti_add_failed"), problem)
-    return
-  end
-  noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.forti_added", { name = profile.name }))
-end
-
--- Reads the connection keys of an openfortivpn config (`key = value`, `#`
--- comments). Credentials (username, password, otp, cookie, user-key) are
--- deliberately ignored: SAML does not use them and this plugin stores no
--- secrets. The first valid trusted-cert wins, since a profile pins one.
-local function parseOpenfortivpnConfig(content)
-  local fields = { host = nil, port = nil, realm = "", trustedCert = "" }
-  for line in content:gmatch("[^\r\n]+") do
-    local key, value = line:match("^%s*([%w%-]+)%s*=%s*(.-)%s*$")
-    if key ~= nil and not line:match("^%s*#") then
-      key = key:lower()
-      if key == "host" then
-        fields.host = value
-      elseif key == "port" then
-        fields.port = value
-      elseif key == "realm" then
-        fields.realm = value
-      elseif key == "trusted-cert" and fields.trustedCert == "" and validCert(value:lower()) then
-        fields.trustedCert = value
-      end
-    end
-  end
-  if fields.host == nil or fields.host == "" then
-    return nil
-  end
-  return fields
-end
-
--- Name comes from the file ("UCY VPN.conf" -> "UCY VPN"); a pasted config's
--- temp file carries no useful name, so that falls back to the gateway.
-local function importOpenfortivpnConfig(path, content, isTemp)
-  local fields = type(content) == "string" and parseOpenfortivpnConfig(content) or nil
-  if fields == nil then
-    return nil, noctalia.tr("notifications.forti_no_host")
-  end
-  local base = (path:match("([^/]+)$") or ""):gsub("%.[^.]*$", "")
-  local gateway = fields.host
-  if fields.port ~= nil and fields.port ~= "" then
-    gateway = `{fields.host}:{fields.port}`
-  end
-  return saveFortiProfile({
-    name = if isTemp or base == "config" then "" else base,
-    gateway = gateway,
-    realm = fields.realm,
-    trustedCert = fields.trustedCert,
-  })
-end
-
-local function finishFortiRun(profile, code)
-  local st = fortiRuns[profile.id]
-  fortiRuns[profile.id] = nil
-  publishConnections()
-  if st == nil then
-    return
-  end
-  log(`openfortivpn for {profile.name} exited code={code} phase={st.phase}`)
-  if st.stopping then
-    return
-  end
-  local title = noctalia.tr(st.phase == "up" and "notifications.forti_dropped" or "notifications.connect_failed")
-  if code == 126 or code == 127 then
-    -- pkexec: the polkit dialog was dismissed or authorization was refused.
-    noctalia.notifyError(title, noctalia.tr("notifications.forti_not_authorized"))
-  elseif st.certDigest ~= nil then
-    noctalia.notifyError(title, noctalia.tr("notifications.forti_untrusted_cert", { digest = st.certDigest }))
-  elseif st.phase == "browser" then
-    noctalia.notifyError(title, noctalia.tr("notifications.forti_login_timeout"))
-  else
-    noctalia.notifyError(title, st.lastError or noctalia.tr("notifications.forti_exited", { code = tostring(code) }))
-  end
-end
-
-local function onFortiLine(profile, line)
-  local st = fortiRuns[profile.id]
-  if st == nil or type(line) ~= "string" then
-    return
-  end
-  local pid = line:match("^" .. STREAM_TAG .. "pid:(%d+)")
-  if pid ~= nil then
-    st.pid = pid
-    return
-  end
-  local code = line:match("^" .. STREAM_TAG .. "done:(%d+)")
-  if code ~= nil then
-    finishFortiRun(profile, tonumber(code))
-    return
-  end
-
-  local url = line:match("Authenticate at '(https://[^']+)'")
-  if url ~= nil then
-    st.phase = "browser"
-    st.url = url
-    -- The listener only waits ~50 s for the redirect, so open it right away.
-    noctalia.runAsync({ "xdg-open", url })
-    noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.forti_sign_in", { name = profile.name }))
-    publishConnections()
-  elseif line:find("Processing HTTP SAML request", 1, true) then
-    st.phase = "connecting"
-    publishConnections()
-  elseif line:find("Tunnel is up and running", 1, true) then
-    st.phase = "up"
-    noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.forti_connected", { name = profile.name }))
-    publishConnections()
-  else
-    local digest = line:match("%-%-trusted%-cert[%s=]+(%x+)")
-    if digest ~= nil and #digest == 64 then
-      st.certDigest = digest
-    end
-    local err = line:match("^ERROR:%s*(.-)%s*$")
-    if err ~= nil and err ~= "" and st.lastError == nil then
-      st.lastError = err
-    end
-  end
-end
-
-local function connectForti(profile)
-  if fortiRuns[profile.id] ~= nil then
-    return
-  end
-  local bin = fortiBinary()
-  if bin == nil or not noctalia.commandExists("pkexec") then
-    noctalia.notifyError(noctalia.tr("notifications.connect_failed"), noctalia.tr("notifications.forti_missing"))
-    return
-  end
-  if not validProfile(profile) then
-    noctalia.notifyError(noctalia.tr("notifications.connect_failed"), noctalia.tr("notifications.forti_bad_gateway"))
-    return
-  end
-
-  local args = { "pkexec", shellQuote(bin), shellQuote(`{profile.host}:{math.floor(tonumber(profile.port))}`), "--saml-login" }
-  if (profile.realm or "") ~= "" then
-    table.insert(args, "--realm=" .. shellQuote(profile.realm))
-  end
-  if (profile.trustedCert or "") ~= "" then
-    table.insert(args, "--trusted-cert=" .. shellQuote(profile.trustedCert))
-  end
-  local dir = noctalia.pluginDataDir()
-  if dir == nil then
-    noctalia.notifyError(noctalia.tr("notifications.connect_failed"), noctalia.tr("notifications.no_data_dir"))
-    return
-  end
-  -- openfortivpn logs to a private file that `tail --pid` follows, never
-  -- straight into the stream's pipe: if a plugin reload drops that pipe, the
-  -- tunnel's next log write would die of SIGPIPE. The log carries gateway
-  -- messages and addresses, not the SAML cookie. pkexec execs openfortivpn in
-  -- place, so $! is the tunnel's pid for the whole run.
-  local logFile = shellQuote(`{dir}/forti-{profile.id}.log`)
-  local cmd = `umask 077; : > {logFile}; `
-    .. table.concat(args, " ")
-    .. ` > {logFile} 2>&1 < /dev/null & p=$!; echo "{STREAM_TAG}pid:$p"; `
-    .. `tail -n +1 --pid="$p" -f {logFile}; wait "$p"; echo "{STREAM_TAG}done:$?"`
-
-  fortiRuns[profile.id] = { phase = "auth" }
-  publishConnections()
-  local ok = noctalia.runStream(cmd, function(line)
-    onFortiLine(profile, line)
-  end)
-  if not ok then
-    fortiRuns[profile.id] = nil
-    publishConnections()
-    noctalia.notifyError(noctalia.tr("notifications.connect_failed"), "failed to start openfortivpn")
-  end
-end
-
-local function disconnectForti(profile)
-  local st = fortiRuns[profile.id]
-  if st == nil or st.stopping then
-    return
-  end
-  if st.pid == nil or not st.pid:match("^%d+$") then
-    return
-  end
-  st.stopping = true
-  publishConnections()
-  -- While the polkit prompt is up the pid is still pkexec with our real uid
-  -- and can be signalled directly; once it has become openfortivpn it is root.
-  local argv = if st.phase == "auth" then { "kill", "-TERM", st.pid } else { "pkexec", "kill", "-TERM", st.pid }
-  run(argv, function(result)
-    if result.exitCode ~= 0 then
-      st.stopping = false
-      publishConnections()
-      noctalia.notifyError(noctalia.tr("notifications.disconnect_failed"), firstLine(result.stderr) ~= "" and firstLine(result.stderr) or noctalia.tr("notifications.forti_not_authorized"))
-    elseif st.orphan then
-      -- No stream to report the exit; the next reconcile confirms it is gone.
-      fortiRuns[profile.id] = nil
-      publishConnections()
-    end
-  end, 60000)
-end
-
-local function deleteForti(profile, index)
-  if fortiRuns[profile.id] ~= nil then
-    noctalia.notifyError(noctalia.tr("notifications.delete_failed"), noctalia.tr("notifications.forti_disconnect_first"))
-    return
-  end
-  table.remove(data.fortiProfiles, index)
-  saveData()
-  local dir = noctalia.pluginDataDir()
-  if dir ~= nil then
-    noctalia.removeFile(`{dir}/forti-{profile.id}.log`)
-  end
-  publishConnections()
-end
-
--- A tunnel survives a plugin reload (it is a root process), but its output
--- stream does not. Match running openfortivpn processes back to profiles by
--- their gateway argument so the row stays accurate and can be disconnected.
-local function reconcileForti()
-  if #data.fortiProfiles == 0 then
-    return
-  end
-  run({ "pgrep", "-a", "-x", "openfortivpn" }, function(result)
-    local running = {}
-    for line in (result.stdout or ""):gmatch("[^\n]+") do
-      local pid, cmdline = line:match("^(%d+)%s+(.*)$")
-      if pid ~= nil then
-        for token in cmdline:gmatch("%S+") do
-          running[token] = pid
-        end
-      end
-    end
-    local changed = false
-    for _, profile in ipairs(data.fortiProfiles) do
-      local pid = running[`{profile.host}:{profile.port}`]
-      local st = fortiRuns[profile.id]
-      if pid ~= nil and st == nil then
-        fortiRuns[profile.id] = { phase = "up", pid = pid, orphan = true }
-        changed = true
-      elseif pid == nil and st ~= nil and st.orphan then
-        fortiRuns[profile.id] = nil
-        changed = true
-      end
-    end
-    if changed then
-      publishConnections()
-    end
-  end)
-end
-
 -- An import can fail after the panel has closed (the picker closes it), so a
 -- toast is the only thing the user sees and it is gone in seconds. Record the
 -- failure too, and the panel shows it the next time it is opened.
@@ -825,18 +416,6 @@ local function finishImport(path, typeArg, isTemp)
     if resolvedType == nil then
       importFailed(noctalia.tr("notifications.detect_failed"), path)
       cleanup()
-      return
-    end
-    -- Not a NetworkManager connection: becomes a Fortinet SAML profile.
-    if resolvedType == "openfortivpn" then
-      local profile, problem = importOpenfortivpnConfig(path, noctalia.readFile(path), isTemp)
-      cleanup()
-      if profile == nil then
-        importFailed(problem, if isTemp then "" else path)
-        return
-      end
-      noctalia.state.set("vpn.lastImport", { ok = true, reason = "", path = "", at = os.time() })
-      noctalia.notify(noctalia.tr("title"), noctalia.tr("notifications.imported", { name = profile.name }))
       return
     end
     run({ "nmcli", "connection", "import", "type", resolvedType, "file", path }, function(result)
@@ -911,7 +490,7 @@ local function maybeAutoConnect()
   if not cfgBool("auto_connect_enabled", false) then
     return
   end
-  if os.time() < autoConnectBlockedUntil or autoConnectPausedFor ~= nil then
+  if os.time() < autoConnectBlockedUntil then
     return
   end
   local uuid = data.defaultVpnUuid
@@ -961,17 +540,6 @@ local function maybeAutoDisconnect()
 end
 
 local function evaluateTrust(physicalRows)
-  local keys = {}
-  for _, row in ipairs(physicalRows) do
-    table.insert(keys, row.key or row.name)
-  end
-  table.sort(keys)
-  currentNetworkSignature = table.concat(keys, "\n")
-  if autoConnectPausedFor ~= nil and autoConnectPausedFor ~= currentNetworkSignature then
-    log("network changed - auto-connect resumes")
-    autoConnectPausedFor = nil
-  end
-
   if #physicalRows == 0 then
     untrustedStreak = 0
     trustedStreak = 0
@@ -1102,32 +670,7 @@ local DETAIL_LABELS = {
   ["IP6.ADDRESS"] = "ipv6",
 }
 
-local FORTI_PHASE_KEYS = { auth = "forti_auth", browser = "forti_browser", connecting = "forti_connecting", up = "forti_up" }
-
-local function fortiDetails(uuid, profile)
-  local st = fortiRuns[profile.id]
-  local rows = {
-    { label = noctalia.tr("panel.detail.gateway"), value = `{profile.host}:{profile.port}` },
-    { label = noctalia.tr("panel.detail.state"), value = noctalia.tr("panel.detail." .. (st ~= nil and FORTI_PHASE_KEYS[st.phase] or "forti_down")) },
-  }
-  if (profile.realm or "") ~= "" then
-    table.insert(rows, { label = noctalia.tr("panel.detail.realm"), value = profile.realm })
-  end
-  if (profile.trustedCert or "") ~= "" then
-    table.insert(rows, { label = noctalia.tr("panel.detail.cert"), value = profile.trustedCert:sub(1, 16) .. "…" })
-  end
-  if st ~= nil and st.pid ~= nil then
-    table.insert(rows, { label = noctalia.tr("panel.detail.pid"), value = st.pid })
-  end
-  noctalia.state.set("vpn.details", { uuid = uuid, rows = rows })
-end
-
 local function fetchDetails(uuid)
-  local profile = fortiProfileFor(uuid)
-  if profile ~= nil then
-    fortiDetails(uuid, profile)
-    return
-  end
   if not isUuid(uuid) then
     return
   end
@@ -1171,6 +714,10 @@ end
 -- This mirrors what other Noctalia plugins do for file selection.
 local pendingPick = nil -- { path = <tmp file>, started = <epoch seconds> }
 
+local function shellQuote(value)
+  return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+end
+
 local function startFilePicker()
   if pendingPick ~= nil then
     noctalia.notifyError(noctalia.tr("title"), noctalia.tr("notifications.pick_in_progress"))
@@ -1179,7 +726,7 @@ local function startFilePicker()
 
   local picker, pickerBinary, pickerNeedle
   if noctalia.commandExists("kdialog") then
-    picker = "kdialog --getopenfilename ~ '*.ovpn *.conf *.zip config|VPN configurations'"
+    picker = "kdialog --getopenfilename ~ '*.ovpn *.conf *.zip|VPN configurations'"
     pickerBinary, pickerNeedle = "kdialog", "--getopenfilename"
   elseif noctalia.commandExists("zenity") then
     picker = "zenity --file-selection --title='Select a VPN configuration'"
@@ -1249,64 +796,18 @@ local function pollFilePicker()
   end
 end
 
--- connect/disconnect/delete take either a NetworkManager UUID or a Fortinet
--- SAML row id; the UI sends the same ops for both.
-local function connectAny(uuid)
-  local profile = fortiProfileFor(uuid)
-  if profile ~= nil then
-    connectForti(profile)
-  elseif not isFortiId(uuid) then
-    connectUuid(uuid, false)
-  end
-end
-
-local function disconnectAny(uuid)
-  local profile = fortiProfileFor(uuid)
-  if profile ~= nil then
-    disconnectForti(profile)
-  elseif not isFortiId(uuid) then
-    if uuid == data.defaultVpnUuid and cfgBool("auto_connect_enabled", false) then
-      autoConnectPausedFor = currentNetworkSignature
-      log("default VPN disconnected by hand - auto-connect paused until the network changes")
-    end
-    disconnectUuid(uuid, false)
-  end
-end
-
-local function deleteAny(uuid)
-  local profile, index = fortiProfileFor(uuid)
-  if profile ~= nil then
-    deleteForti(profile, index)
-  elseif not isFortiId(uuid) then
-    deleteUuid(uuid)
-  end
-end
-
 local function handleCommand(cmd)
   if type(cmd) ~= "table" then
     return
   end
   local op = cmd.op
   if op == "connect" then
-    connectAny(cmd.uuid)
+    connectUuid(cmd.uuid, false)
   elseif op == "disconnect" then
-    disconnectAny(cmd.uuid)
+    disconnectUuid(cmd.uuid, false)
   elseif op == "delete" then
-    deleteAny(cmd.uuid)
-  elseif op == "fortiAdd" then
-    addFortiProfile(cmd)
-  elseif op == "fortiOpenLogin" then
-    local profile = fortiProfileFor(cmd.uuid)
-    local st = profile ~= nil and fortiRuns[profile.id] or nil
-    if st ~= nil and st.url ~= nil then
-      noctalia.runAsync({ "xdg-open", st.url })
-    end
+    deleteUuid(cmd.uuid)
   elseif op == "setDefault" then
-    -- SAML needs someone at a browser, so a Fortinet profile can never be the
-    -- auto-connect default.
-    if isFortiId(cmd.uuid) then
-      return
-    end
     data.defaultVpnUuid = cmd.uuid or ""
     saveData()
     publishTrust()
@@ -1357,9 +858,9 @@ function onIpc(event, payload)
   if event == "refresh" then
     refreshAll()
   elseif event == "connect" then
-    connectAny(payload)
+    connectUuid(payload, false)
   elseif event == "disconnect" then
-    disconnectAny(payload)
+    disconnectUuid(payload, false)
   elseif event == "status" then
     local names = {}
     for _, row in ipairs(lastVpnRows) do
@@ -1367,20 +868,10 @@ function onIpc(event, payload)
         table.insert(names, row.name)
       end
     end
-    for _, profile in ipairs(data.fortiProfiles) do
-      local st = fortiRuns[profile.id]
-      if st ~= nil and st.phase == "up" then
-        table.insert(names, profile.name)
-      end
-    end
     noctalia.notify(noctalia.tr("title"), #names > 0 and table.concat(names, ", ") or noctalia.tr("notifications.status_none"))
   elseif event == "list" then
     for _, row in ipairs(lastVpnRows) do
       log(`conn name={row.name} type={row.ctype} protocol={row.protocol} uuid={row.uuid} active={tostring(row.active)}`)
-    end
-    for _, profile in ipairs(data.fortiProfiles) do
-      local st = fortiRuns[profile.id]
-      log(`forti name={profile.name} gateway={profile.host}:{profile.port} uuid={FORTI_PREFIX}{profile.id} phase={st ~= nil and st.phase or "down"}`)
     end
     log(`trusted={table.concat(data.trustedNetworks, ",")} default={data.defaultVpnUuid} autoStarted={data.autoStartedUuid}`)
   elseif event == "import" then
@@ -1402,7 +893,6 @@ function update()
   local interval = cfgInt("poll_interval_seconds", 2, 60, 5)
   if tickCount % interval == 0 then
     refreshAll()
-    reconcileForti()
   end
 end
 
@@ -1416,4 +906,3 @@ noctalia.state.set("vpn.details", { uuid = "", rows = {} })
 noctalia.state.set("vpn.picking", false)
 noctalia.state.set("vpn.lastImport", { ok = true, reason = "", path = "", at = 0 })
 refreshAll()
-reconcileForti()

@@ -38,7 +38,7 @@
     "path_placeholder": "~/Downloads/client.ovpn",
     "import": "Import",
     "or_paste": "or paste a config",
-    "paste_placeholder": "[Interface] / [Peer] for WireGuard, full .ovpn contents, or an openfortivpn config (host = ...)",
+    "paste_placeholder": "[Interface] / [Peer] for WireGuard, or full .ovpn contents",
     "import_pasted": "Import Pasted Config",
     "manual_note": "PPTP, L2TP/IPsec and IKEv2 usually need fields typed in rather than a file - create those with nmtui or nm-connection-editor and they'll appear above automatically.",
     "no_connections": "No VPN connections yet. Import one below, or create one with nmtui and it will show up here.",
@@ -58,15 +58,7 @@
       "vpn_state": "VPN state",
       "ipv4": "IPv4",
       "gateway": "Gateway",
-      "ipv6": "IPv6",
-      "realm": "Realm",
-      "cert": "Cert",
-      "pid": "PID",
-      "forti_down": "Disconnected",
-      "forti_auth": "Waiting for authorization",
-      "forti_browser": "Waiting for browser sign-in",
-      "forti_connecting": "Bringing up tunnel",
-      "forti_up": "Connected"
+      "ipv6": "IPv6"
     },
     "delete": "Delete connection",
     "delete_confirm": "Confirm deleting {name}",
@@ -78,22 +70,7 @@
     "collapse": "Hide trusted networks",
     "browse": "Choose a file and import it",
     "import_failed": "Import failed",
-    "dismiss": "Dismiss",
-    "forti_title": "Fortinet SSL VPN with SAML sign-in",
-    "forti_note": "Runs openfortivpn directly (NetworkManager's Fortinet plugins can't do SAML). Connecting asks for your password via polkit, then opens the sign-in page in your browser - finish it within about 50 seconds. An openfortivpn config file can also be imported above.",
-    "forti_missing": "Needs openfortivpn 1.21+ and pkexec (polkit). On Arch: sudo pacman -S openfortivpn",
-    "forti_gateway_placeholder": "Gateway, e.g. vpn.example.com:10443",
-    "forti_name_placeholder": "Name (optional)",
-    "forti_realm_placeholder": "Realm (optional)",
-    "forti_cert_placeholder": "Trusted cert sha256 (only if self-signed)",
-    "forti_add": "Add Fortinet Profile",
-    "forti_open_login": "Open the sign-in page again",
-    "forti_phase": {
-      "auth": "Waiting for polkit authorization…",
-      "browser": "Finish signing in in your browser…",
-      "connecting": "Signed in - bringing up the tunnel…",
-      "up": "Connected"
-    }
+    "dismiss": "Dismiss"
   },
   "launcher": {
     "open_title": "Open VPN Manager",
@@ -110,7 +87,7 @@
     "auto_disconnect_failed": "VPN auto-disconnect failed",
     "delete_failed": "Could not delete VPN",
     "import_failed": "Could not import VPN",
-    "detect_failed": "Couldn't detect the protocol. Pick one explicitly (OpenVPN, WireGuard, OpenConnect, vpnc, openfortivpn) and try again.",
+    "detect_failed": "Couldn't detect the protocol. Pick one explicitly (OpenVPN, WireGuard, OpenConnect, vpnc) and try again.",
     "imported": "Imported {name}.",
     "a_connection": "connection",
     "no_path": "Enter a file path first.",
@@ -125,21 +102,6 @@
     "needs_secrets": "{name} needs a password and no secret agent is running. Save it with 'nmcli connection modify {name} vpn.secrets password=… vpn.data password-flags=0', or connect it by hand once.",
     "asking_secrets": "{name} needs a password - asking for it in a terminal.",
     "pick_in_progress": "A file picker is already open.",
-    "no_picker": "No file picker found. Install kdialog or zenity, or type the path.",
-    "forti_add_failed": "Could not add Fortinet profile",
-    "forti_added": "Added {name}.",
-    "forti_bad_gateway": "Enter the gateway as a hostname or IPv4 address, optionally with :port.",
-    "forti_bad_realm": "A realm may only contain letters, digits, '.', '_' and '-'.",
-    "forti_bad_cert": "The trusted cert must be the 64-character sha256 digest openfortivpn prints.",
-    "forti_missing": "openfortivpn or pkexec is not installed.",
-    "forti_not_authorized": "Authorization was cancelled or refused.",
-    "forti_untrusted_cert": "The gateway's certificate isn't trusted by the system. If you have verified it, delete and re-add the profile with this trusted cert: {digest}",
-    "forti_login_timeout": "Browser sign-in didn't finish in time. Connect again - an existing IdP session usually makes the second try instant.",
-    "forti_exited": "openfortivpn exited (code {code}).",
-    "forti_dropped": "Fortinet VPN disconnected",
-    "forti_sign_in": "Sign in to {name} in your browser.",
-    "forti_connected": "Connected {name}.",
-    "forti_disconnect_first": "Disconnect it first.",
-    "forti_no_host": "No 'host = ...' line found in the openfortivpn config."
+    "no_picker": "No file picker found. Install kdialog or zenity, or type the path."
   }
 }
