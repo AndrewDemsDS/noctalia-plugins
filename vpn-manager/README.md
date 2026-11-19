@@ -54,7 +54,8 @@ WireGuard needs nothing extra; NetworkManager 1.16+ supports it natively.
 Add the **VPN Manager** widget under Settings → Bar (or add
 `andrewdems/vpn-manager:bar` to a bar's widget list in `config.toml`), and/or
 add the `toggle` shortcut to the control center. Click the bar widget to
-open the panel.
+open the panel, or turn on `bar_click_toggles` to have a left-click toggle the
+starred default VPN (right-click then opens the panel).
 
 In the panel:
 
@@ -118,6 +119,7 @@ trusted**); turn that off if you plug into untrusted wired networks too.
 | `notify_on_autoswitch` | `bool` | `true` | Notify on automatic connect/disconnect. |
 | `poll_interval_seconds` | `int` | `5` | How often to check VPN/network status. |
 | `stable_checks` | `int` | `3` | Consecutive checks required before switching (debounce). |
+| `bar_click_toggles` | `bool` | `false` | Left-click on the bar widget toggles the default VPN, and right-click opens the panel. |
 
 ## IPC
 

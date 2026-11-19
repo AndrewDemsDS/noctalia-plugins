@@ -28,6 +28,10 @@
     "stable_checks": {
       "label": "Stable checks before switching",
       "description": "How many consecutive checks a network change must persist before auto-connect/disconnect reacts. Higher values avoid flapping during Wi-Fi roaming."
+    },
+    "bar_click_toggles": {
+      "label": "Bar click toggles the default VPN",
+      "description": "Left-click the bar icon to connect or disconnect the starred default VPN. Right-click opens the panel."
     }
   },
   "panel": {

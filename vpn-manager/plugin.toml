@@ -63,6 +63,13 @@ default = 3
 min = 1
 max = 20
 
+[[setting]]
+key = "bar_click_toggles"
+type = "bool"
+label_key = "settings.bar_click_toggles.label"
+description_key = "settings.bar_click_toggles.description"
+default = false
+
 [[service]]
 id = "service"
 entry = "service.luau"
